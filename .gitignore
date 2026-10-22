@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+.vs/
+
+# Projetos de clientes: confidenciais e acima do limite de 100 MB do GitHub
+*.rvt
+*.rfa
+*.ifc
+*.conv.json*
+*.relatorio.txt

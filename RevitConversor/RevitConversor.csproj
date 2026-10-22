@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Pacote para o Revit Automation (nuvem). Gera ..\VerificadorRevit\nuvem\ConvRevit<ano>.zip:
+       dotnet build -c Release -p:RevitVersion=2026  (e de novo com 2025) -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RevitVersion Condition="'$(RevitVersion)' == ''">2026</RevitVersion>
+    <OutputPath>bin\$(RevitVersion)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="$(RevitVersion).*" ExcludeAssets="runtime" />
+    <PackageReference Include="Autodesk.Forge.DesignAutomation.Revit" Version="$(RevitVersion).*" />
+  </ItemGroup>
+
+  <Target Name="Bundle" AfterTargets="Build">
+    <PropertyGroup>
+      <BundleRoot>$(IntermediateOutputPath)bundle\</BundleRoot>
+      <BundleDir>$(BundleRoot)ConvRevit$(RevitVersion).bundle\</BundleDir>
+      <PackageXml>$([System.IO.File]::ReadAllText('PackageContents.xml').Replace('RVER', '$(RevitVersion)'))</PackageXml>
+    </PropertyGroup>
+    <RemoveDir Directories="$(BundleRoot)" />
+    <Copy SourceFiles="$(OutputPath)RevitConversor.dll;$(OutputPath)DesignAutomationBridge.dll;RevitConversor.addin" DestinationFolder="$(BundleDir)Contents" />
+    <WriteLinesToFile File="$(BundleDir)PackageContents.xml" Lines="$(PackageXml)" Overwrite="true" />
+    <MakeDir Directories="..\VerificadorRevit\nuvem" />
+    <ZipDirectory SourceDirectory="$(BundleRoot)" DestinationFile="..\VerificadorRevit\nuvem\ConvRevit$(RevitVersion).zip" Overwrite="true" />
+  </Target>
+</Project>

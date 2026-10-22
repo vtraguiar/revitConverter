@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" Name="RevitConversor" Version="1.0.0" AutodeskProduct="Revit" ProductType="Application" ProductCode="{8B6C1E52-3D4F-4A7B-9C21-5E0F6A8D3B17}">
+  <CompanyDetails Name="Conversor" />
+  <Components Description="Conversor de versões">
+    <RuntimeRequirements OS="Win64" Platform="Revit" SeriesMin="RRVER" SeriesMax="RRVER" />
+    <ComponentEntry AppName="RevitConversor" ModuleName="./Contents/RevitConversor.addin" AppDescription="Conversor de versões" LoadOnCommandInvocation="False" LoadOnRevitStartup="True" />
+  </Components>
+</ApplicationPackage>
