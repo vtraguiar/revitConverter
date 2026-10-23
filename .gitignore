@@ -9,3 +9,6 @@ obj/
 *.ifc
 *.conv.json*
 *.relatorio.txt
+
+# Pacote de distribuição
+ConversorRevit-*.zip
