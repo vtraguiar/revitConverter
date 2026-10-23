@@ -210,6 +210,8 @@ namespace VerificadorRevit
                     Theme.CategoryRow(props, g.Key);
                     foreach (var r in g) props.Rows.Add(r.Item2, r.Item3);
                 }
+            props.CurrentCell = null; // sem isso a grade abre rolada até a última linha
+            if (props.Rows.Count > 0) props.FirstDisplayedScrollingRowIndex = 0;
             typeIcon.Image = Icons.RevitFile(32, valid: i?.Version != null);
             typeName.Text = i == null ? "Nenhum arquivo selecionado" : i.Version == null ? "Arquivo não reconhecido" : $"{FileProps.Kind(i.File)} do Revit {i.Version}";
             viewTab.Text = i == null ? "Início" : Path.GetFileName(i.File);
@@ -272,7 +274,7 @@ namespace VerificadorRevit
         bool CheckFile(RvtInfo i)
         {
             if (i?.Version != null && i.File.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase)) return true;
-            MessageBox.Show(this, "Selecione na lista um projeto do Revit (.rvt) válido.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Selecione no Navegador de arquivos um projeto do Revit (.rvt) válido.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return false;
         }
 
