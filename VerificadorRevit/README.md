@@ -18,3 +18,13 @@ Copie a pasta `bin/Release/net48` inteira (o `.exe` precisa da subpasta `nuvem`)
 
 Custo: o Revit Automation tem 300 minutos grátis por mês; acima disso, US$ 3 a cada 12 minutos (tabela da Autodesk).
 Os arquivos enviados são apagados pela Autodesk após 24 h.
+
+## Atualizações
+Ao abrir, o programa consulta a última versão publicada em
+https://github.com/vtraguiar/revitConverter/releases e oferece atualizar (também em Arquivo > Verificar atualizações).
+Só instala se o `.zip` conferir com o `.sha256` publicado junto.
+
+Para publicar uma versão nova (na raiz do repositório, depois do commit):
+```
+./publicar.sh 1.1 "O que mudou"
+```

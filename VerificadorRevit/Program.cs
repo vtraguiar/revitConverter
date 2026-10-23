@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -14,6 +15,7 @@ namespace VerificadorRevit
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
             var form = new MainForm();
             form.Load += (s, e) => form.AddFiles(args); // permite "Abrir com" e arrastar sobre o .exe
             Application.Run(form);
@@ -22,115 +24,214 @@ namespace VerificadorRevit
 
     sealed class MainForm : Form
     {
-        readonly ListView list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = false };
-        readonly PictureBox preview = new PictureBox { Dock = DockStyle.Top, Height = 200, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White };
-        readonly TextBox details = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Segoe UI", 10f) };
-        readonly FlowLayoutPanel top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
-        readonly ToolStripStatusLabel status = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+        readonly TreeView browser = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, HideSelection = false, ShowNodeToolTips = true, Sorted = true, ItemHeight = 20 };
+        readonly DataGridView props = Theme.PropertyGrid();
+        readonly PictureBox typeIcon = new PictureBox { Dock = DockStyle.Left, Width = 44, SizeMode = PictureBoxSizeMode.CenterImage, BackColor = Color.White };
+        readonly Label typeName = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, BackColor = Color.White };
+        readonly PictureBox preview = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.CenterImage, BackColor = Color.White };
+        readonly Label viewTab = new Label { Dock = DockStyle.Left, AutoSize = false, Width = 260, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0), BackColor = Color.White, AutoEllipsis = true };
+        readonly Label hint = new Label { Dock = DockStyle.Bottom, Height = 84, BackColor = Color.White, ForeColor = Theme.Muted, Padding = new Padding(16, 8, 16, 8) };
+        readonly ToolStripStatusLabel status = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft, Text = "Pronto" };
         readonly ToolStripProgressBar progress = new ToolStripProgressBar { Style = ProgressBarStyle.Marquee, Visible = false };
+        readonly Control ribbon;
 
         public MainForm()
         {
             Text = "Verificador e conversor de arquivos do Revit";
-            Size = new Size(1000, 600);
-            MinimumSize = new Size(700, 420);
-            Font = new Font("Segoe UI", 9.5f);
-            AllowDrop = true;
+            Size = new Size(1100, 680);
+            MinimumSize = new Size(800, 500);
+            Font = new Font("Segoe UI", 9f);
+            BackColor = Theme.Window;
 
-            list.Columns.Add("Arquivo", 280);
-            list.Columns.Add("Versão", 90);
-            list.Columns.Add("Abre em", 200);
-            list.SelectedIndexChanged += (s, e) => ShowDetails(Selected);
+            browser.ImageList = new ImageList { ColorDepth = ColorDepth.Depth32Bit, ImageSize = new Size(16, 16) };
+            browser.ImageList.Images.AddRange(new Image[] { Icons.Folder(16), Icons.RevitFile(16), Icons.RevitFile(16, valid: false) });
+            browser.AfterSelect += (s, e) => ShowDetails(e.Node.Tag as RvtInfo);
 
-            AddButton("Abrir arquivos...", (s, e) =>
-            {
-                using (var dlg = new OpenFileDialog { Filter = "Arquivos do Revit (*.rvt;*.rfa;*.rte;*.rft)|*.rvt;*.rfa;*.rte;*.rft|Todos (*.*)|*.*", Multiselect = true })
-                    if (dlg.ShowDialog(this) == DialogResult.OK) AddFiles(dlg.FileNames);
-            });
-            AddButton("Converter para Revit 2025", async (s, e) => await ConvertTo2025());
-            AddButton("Exportar IFC (universal)", async (s, e) => await ExportIfc());
-            AddButton("Chaves da Autodesk...", (s, e) => AskKeys());
-            top.Controls.Add(new Label { Text = "ou arraste arquivos .rvt / .rfa para a janela", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(12, 8, 0, 0) });
+            // Paletas à esquerda, como no Revit: Propriedades em cima, navegador embaixo.
+            var typeBox = new Panel { Dock = DockStyle.Top, Height = 48 };
+            typeBox.Controls.Add(typeName);
+            typeBox.Controls.Add(typeIcon);
+            var propsPalette = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
+            propsPalette.Controls.Add(props);
+            propsPalette.Controls.Add(typeBox);
+            propsPalette.Controls.Add(Theme.PaletteHeader("Propriedades"));
+            var browserPalette = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
+            browserPalette.Controls.Add(browser);
+            browserPalette.Controls.Add(Theme.PaletteHeader("Navegador de arquivos"));
+            var palettes = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, BackColor = Theme.Line, SplitterWidth = 4 };
+            palettes.Panel1.Controls.Add(propsPalette);
+            palettes.Panel2.Controls.Add(browserPalette);
 
-            var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 0, 0, 0) };
-            right.Controls.Add(details);
-            right.Controls.Add(preview);
+            // Área de desenho: aba da vista em cima, miniatura no meio, orientação embaixo.
+            var viewBar = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Theme.TabStrip, Padding = new Padding(4, 3, 0, 0) };
+            viewBar.Controls.Add(viewTab);
+            var canvas = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
+            canvas.Controls.Add(preview);
+            canvas.Controls.Add(hint);
+            canvas.Controls.Add(viewBar);
 
-            var split = new SplitContainer { Dock = DockStyle.Fill };
-            Load += (s, e) => split.SplitterDistance = ClientSize.Width * 3 / 5; // antes do Load o tamanho ainda é o padrão
-            split.Panel1.Controls.Add(list);
-            split.Panel2.Controls.Add(right);
+            var split = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1, BackColor = Theme.Line, SplitterWidth = 4 };
+            split.Panel1.Controls.Add(palettes);
+            split.Panel2.Controls.Add(canvas);
+            Load += (s, e) => { split.SplitterDistance = 320; palettes.SplitterDistance = palettes.Height * 3 / 5; }; // antes do Load o tamanho ainda é o padrão
 
-            var bar = new StatusStrip();
+            var bar = new StatusStrip { BackColor = Theme.TabStrip };
             bar.Items.Add(status);
             bar.Items.Add(progress);
+            bar.Items.Add(new ToolStripStatusLabel("Versão " + Updater.Current.ToString(3)) { ForeColor = Theme.Muted });
 
+            ribbon = BuildRibbon();
             Controls.Add(split);
-            Controls.Add(top);
+            Controls.Add(ribbon);
             Controls.Add(bar);
 
-            DragEnter += (s, e) => e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
-            DragDrop += (s, e) => AddFiles((string[])e.Data.GetData(DataFormats.FileDrop));
+            Shown += async (s, e) => await CheckForUpdate(manual: false);
+            AcceptDrops(this);
             ShowDetails(null);
         }
 
-        RvtInfo Selected => list.SelectedItems.Count > 0 ? (RvtInfo)list.SelectedItems[0].Tag : null;
-
-        void AddButton(string text, EventHandler click)
+        Control BuildRibbon()
         {
-            var b = new Button { Text = text, AutoSize = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(0, 0, 6, 0) };
-            b.Click += click;
-            top.Controls.Add(b);
+            var fileMenu = new ContextMenuStrip();
+            fileMenu.Items.Add("Abrir arquivos...", Icons.Folder(16), (s, e) => OpenFiles());
+            fileMenu.Items.Add("Chaves da Autodesk...", Icons.Key(16), (s, e) => AskKeys());
+            fileMenu.Items.Add("Verificar atualizações", null, async (s, e) => await CheckForUpdate(manual: true));
+            fileMenu.Items.Add(new ToolStripSeparator());
+            fileMenu.Items.Add("Sair", null, (s, e) => Close());
+
+            var fileTab = new Label { Text = "Arquivo", Width = 76, Dock = DockStyle.Left, TextAlign = ContentAlignment.MiddleCenter, BackColor = Theme.Accent, ForeColor = Color.White, Cursor = Cursors.Hand };
+            fileTab.Click += (s, e) => fileMenu.Show(fileTab, new Point(0, fileTab.Height));
+            var tab = new Label { Text = "Conversor", Width = 96, Dock = DockStyle.Left, TextAlign = ContentAlignment.MiddleCenter, BackColor = Theme.RibbonBody };
+            var tabs = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Theme.TabStrip, Padding = new Padding(0, 3, 0, 0) };
+            tabs.Controls.Add(tab);
+            tabs.Controls.Add(new Panel { Dock = DockStyle.Left, Width = 4, BackColor = Theme.TabStrip });
+            tabs.Controls.Add(fileTab);
+
+            // Dock à esquerda: o último adicionado fica mais à esquerda.
+            var body = new Panel { Dock = DockStyle.Top, Height = 98, BackColor = Theme.RibbonBody };
+            body.Controls.Add(Theme.RibbonPanel("Configurações",
+                Theme.RibbonButton("Chaves da\nAutodesk", Icons.Key(), (s, e) => AskKeys())));
+            body.Controls.Add(Theme.RibbonPanel("Converter",
+                Theme.RibbonButton("Converter\npara 2025", Icons.RevitFile(32, "25"), async (s, e) => await ConvertTo2025()),
+                Theme.RibbonButton("Exportar\nIFC", Icons.Cube(), async (s, e) => await ExportIfc())));
+            body.Controls.Add(Theme.RibbonPanel("Arquivos",
+                Theme.RibbonButton("Abrir\narquivos", Icons.Folder(), (s, e) => OpenFiles())));
+
+            var r = new Panel { Dock = DockStyle.Top, Height = 26 + 98 + 1, BackColor = Theme.Line };
+            r.Controls.Add(body);
+            r.Controls.Add(tabs);
+            return r;
         }
 
+        // Arquivos soltos sobre qualquer parte da janela (cada controle recebe o próprio evento).
+        void AcceptDrops(Control c)
+        {
+            c.AllowDrop = true;
+            c.DragEnter += (s, e) => e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            c.DragDrop += (s, e) => AddFiles((string[])e.Data.GetData(DataFormats.FileDrop));
+            foreach (Control child in c.Controls) AcceptDrops(child);
+        }
+
+        // Ao abrir, verifica em silêncio (sem internet, segue normalmente); pelo menu, sempre responde.
+        async Task CheckForUpdate(bool manual)
+        {
+            Updater.Cleanup();
+            Updater.Release r;
+            try { r = await Updater.Check(); }
+            catch (Exception ex)
+            {
+                if (manual) MessageBox.Show(this, "Não foi possível verificar atualizações: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (r == null)
+            {
+                if (manual) MessageBox.Show(this, $"Você já usa a versão mais recente ({Updater.Current.ToString(3)}).", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var notes = r.Notes.Length > 600 ? r.Notes.Substring(0, 600) + "..." : r.Notes;
+            if (MessageBox.Show(this, $"Há uma versão nova do programa: {r.Version.ToString(3)} (você usa a {Updater.Current.ToString(3)}).\n\n{notes}\n\nAtualizar agora? O programa vai fechar e abrir de novo.",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+                return;
+
+            ribbon.Enabled = false;
+            progress.Visible = true;
+            status.Text = "Baixando a atualização...";
+            try { await Updater.Install(r); }
+            catch (Exception ex)
+            {
+                status.Text = "Atualização não concluída.";
+                MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                ribbon.Enabled = true;
+                progress.Visible = false;
+            }
+        }
+
+        RvtInfo Selected => browser.SelectedNode?.Tag as RvtInfo;
+
+        void OpenFiles()
+        {
+            using (var dlg = new OpenFileDialog { Filter = "Arquivos do Revit (*.rvt;*.rfa;*.rte;*.rft)|*.rvt;*.rfa;*.rte;*.rft|Todos (*.*)|*.*", Multiselect = true })
+                if (dlg.ShowDialog(this) == DialogResult.OK) AddFiles(dlg.FileNames);
+        }
+
+        // Navegador agrupado por versão, como as categorias do Navegador de projeto.
         public void AddFiles(string[] paths)
         {
-            ListViewItem last = null;
+            TreeNode last = null;
+            browser.BeginUpdate();
             foreach (var p in paths.Where(File.Exists))
             {
                 var info = RvtInfo.Read(p);
-                last = new ListViewItem(new[]
-                {
-                    Path.GetFileName(p),
-                    info.Version != null ? "Revit " + info.Version : "—",
-                    info.Version != null ? $"Revit {info.Version} ou mais recente" : (info.Error ?? "—")
-                }) { Tag = info, ToolTipText = p };
-                list.Items.Add(last);
+                foreach (TreeNode g in browser.Nodes) g.Nodes.RemoveByKey(p); // reaberto: atualiza
+                var group = info.Version != null ? "Revit " + info.Version : "Não reconhecidos";
+                var node = browser.Nodes[group] ?? browser.Nodes.Add(group, group, 0, 0);
+                int icon = info.Version != null ? 1 : 2;
+                last = node.Nodes.Add(p, Path.GetFileName(p), icon, icon);
+                last.Tag = info;
+                last.ToolTipText = p;
+                node.Expand();
             }
-            if (last != null) { list.SelectedItems.Clear(); last.Selected = true; last.EnsureVisible(); }
+            foreach (var empty in browser.Nodes.Cast<TreeNode>().Where(g => g.Nodes.Count == 0).ToList()) empty.Remove();
+            browser.EndUpdate();
+            if (last != null) browser.SelectedNode = last;
         }
 
         void ShowDetails(RvtInfo i)
         {
             preview.Image?.Dispose();
-            preview.Image = null;
-            if (i == null)
-            {
-                details.Text = "Escolha ou arraste um arquivo do Revit para ver em que versão ele foi salvo.";
-                return;
-            }
-            if (i.Preview != null)
-                try { using (var ms = new MemoryStream(i.Preview)) preview.Image = new Bitmap(Image.FromStream(ms)); } catch { }
+            typeIcon.Image?.Dispose();
+            props.Rows.Clear();
+            if (i != null)
+                foreach (var g in FileProps.Rows(i).GroupBy(r => r.Item1))
+                {
+                    Theme.CategoryRow(props, g.Key);
+                    foreach (var r in g) props.Rows.Add(r.Item2, r.Item3);
+                }
+            typeIcon.Image = Icons.RevitFile(32, valid: i?.Version != null);
+            typeName.Text = i == null ? "Nenhum arquivo selecionado" : i.Version == null ? "Arquivo não reconhecido" : $"{FileProps.Kind(i.File)} do Revit {i.Version}";
+            viewTab.Text = i == null ? "Início" : Path.GetFileName(i.File);
 
-            var nl = Environment.NewLine;
-            if (i.Version == null) { details.Text = i.File + nl + nl + i.Error; return; }
-            details.Text =
-                $"Arquivo: {i.File}{nl}{nl}" +
-                $"Versão: Revit {i.Version}{nl}" +
-                $"Build: {i.Build ?? "—"}{nl}" +
-                $"Trabalho compartilhado: {Translate(i.Worksharing)}{nl}" +
-                $"Idioma ao salvar: {i.Locale ?? "—"}{nl}" +
-                $"Último local salvo: {i.LastSavePath ?? "—"}{nl}{nl}" +
-                $"Abre no Revit {i.Version} e em versões mais recentes.{nl}" +
-                $"Não abre em versões anteriores: o Revit não converte arquivos para versões mais antigas.{nl}{nl}" +
-                "Converter para Revit 2025: reconstrói o modelo na nuvem da Autodesk. Paredes, pisos, forros, telhados, níveis " +
-                "e ambientes voltam editáveis; portas, janelas e móveis sem família no 2025 voltam como forma, sem parametria. " +
-                "Folhas, cotas e anotações não voltam. O relatório lista tudo." + nl + nl +
-                "Exportar IFC: formato aberto que qualquer versão e outros programas BIM abrem, mas sem parametria.";
+            preview.Image = Icons.RevitFile(96, valid: false);
+            if (i?.Preview != null)
+                try
+                {
+                    using (var ms = new MemoryStream(i.Preview))
+                    using (var img = Image.FromStream(ms))
+                    {
+                        preview.Image.Dispose();
+                        preview.Image = new Bitmap(img, img.Width * 2, img.Height * 2); // a miniatura do Revit tem só 128 px
+                    }
+                }
+                catch { }
+
+            hint.Text = i == null ? "Clique em Abrir arquivos ou arraste arquivos .rvt / .rfa para esta janela."
+                : i.Version == null ? i.Error
+                : $"Abre no Revit {i.Version} e nas versões mais recentes. Não abre nas versões anteriores.\n\n" +
+                  "Para usar no Revit 2025, clique em Converter para 2025. Para enviar a quem usa outra versão ou outro programa, clique em Exportar IFC.";
         }
-
-        static string Translate(string ws) =>
-            ws == null ? "—" : ws.StartsWith("Not enabled") ? "não" : "sim (" + ws + ")";
 
         async Task ConvertTo2025()
         {
@@ -195,7 +296,7 @@ namespace VerificadorRevit
                     Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return false;
 
-            top.Enabled = false;
+            ribbon.Enabled = false;
             progress.Visible = true;
             try
             {
@@ -212,7 +313,7 @@ namespace VerificadorRevit
             }
             finally
             {
-                top.Enabled = true;
+                ribbon.Enabled = true;
                 progress.Visible = false;
             }
         }
@@ -251,6 +352,40 @@ namespace VerificadorRevit
                 Keys.Save(id.Text, secret.Text);
                 return true;
             }
+        }
+    }
+
+    // Linhas da paleta Propriedades, com os nomes de categoria usados no Revit.
+    static class FileProps
+    {
+        public static string Kind(string file)
+        {
+            switch (Path.GetExtension(file).ToLowerInvariant())
+            {
+                case ".rfa": return "Família";
+                case ".rte": return "Template de projeto";
+                case ".rft": return "Template de família";
+                default: return "Projeto";
+            }
+        }
+
+        public static IEnumerable<Tuple<string, string, string>> Rows(RvtInfo i)
+        {
+            Tuple<string, string, string> R(string cat, string name, string value) => Tuple.Create(cat, name, value ?? "—");
+            const string Identity = "Dados de identidade", Compat = "Compatibilidade", Other = "Outros";
+            yield return R(Identity, "Nome do arquivo", Path.GetFileName(i.File));
+            yield return R(Identity, "Tipo", Kind(i.File));
+            yield return R(Identity, "Versão do Revit", i.Version != null ? "Revit " + i.Version : null);
+            yield return R(Identity, "Build", i.Build);
+            yield return R(Identity, "Situação", i.Error ?? "Arquivo do Revit válido");
+            yield return R(Compat, "Abre em", i.Version != null ? $"Revit {i.Version} ou mais recente" : null);
+            yield return R(Compat, "Converter para 2025",
+                i.Version == "2026" ? "Disponível" : int.TryParse(i.Version, out var v) && v <= 2025 ? "Não precisa: já abre no 2025" : "Indisponível");
+            yield return R(Other, "Trabalho compartilhado",
+                i.Worksharing == null ? null : i.Worksharing.StartsWith("Not enabled") ? "Não" : "Sim (" + i.Worksharing + ")");
+            yield return R(Other, "Idioma ao salvar", i.Locale);
+            yield return R(Other, "Último local salvo", i.LastSavePath);
+            yield return R(Other, "Pasta", Path.GetDirectoryName(i.File));
         }
     }
 }

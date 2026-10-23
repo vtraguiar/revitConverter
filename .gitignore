@@ -11,4 +11,4 @@ obj/
 *.relatorio.txt
 
 # Pacote de distribuição
-ConversorRevit-*.zip
+ConversorRevit-*.zip*
