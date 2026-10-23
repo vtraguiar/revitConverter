@@ -37,7 +37,7 @@ namespace VerificadorRevit
             Font = new Font("Segoe UI", 9.5f);
             AllowDrop = true;
 
-            list.Columns.Add("Arquivo", 340);
+            list.Columns.Add("Arquivo", 280);
             list.Columns.Add("Versão", 90);
             list.Columns.Add("Abre em", 200);
             list.SelectedIndexChanged += (s, e) => ShowDetails(Selected);
